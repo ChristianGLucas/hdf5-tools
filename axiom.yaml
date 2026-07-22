@@ -1,0 +1,113 @@
+name: christiangeorgelucas/hdf5-tools
+version: 0.1.0
+language: python
+description: >-
+  Composable Axiom nodes for deterministic, offline inspection and bounded
+  extraction of HDF5 (.h5/.hdf5) scientific/hierarchical data files, wrapping
+  h5py (BSD-3-Clause) — the reference Python binding to the HDF5 C library
+  (itself BSD-style-licensed), which owns the canonical HDF5 reader. Check
+  whether bytes are a well-formed HDF5 file; get a quick top-level layout
+  summary (group/dataset counts, tree depth, root attributes); walk the full
+  group/dataset hierarchy; read a dataset's storage layout (dtype, shape,
+  chunking, compression, fill value) without touching its data; read the
+  attributes attached at any group/dataset/file-root path; and extract a
+  bounded rectangular slice of one dataset as JSON or CSV. Every node writes
+  the caller-supplied bytes to a private temp file for the call and removes
+  it before returning (stateless; h5py has no full-featured in-memory-bytes
+  API). Every input is capped at 640 KiB (well under the platform's
+  deployed-invocation ingress limit); ReadSlice additionally rejects a
+  requested slice whose element count would exceed a documented cap
+  *before* reading any data, since HDF5's built-in compression means a
+  small file can decode to an enormous array.
+license: MIT
+author: Christian George Lucas
+tags:
+  - hdf5
+  - h5py
+  - scientific-data
+  - hierarchical-data
+  - dataset
+  - metadata
+  - slicing
+  - numpy
+
+nodes:
+  - name: ValidateFile
+    description: >-
+      Cheaply check whether bytes are a structurally well-formed HDF5 file
+      (the HDF5 library can open it) within the package's documented size
+      cap, without walking the tree or reading any data. Returns valid=false
+      with a human-readable detail for anything unparseable — never a crash
+      or raised error; a hard input-level failure (e.g. the raw payload
+      itself is oversized) is reported via the separate structured error
+      field instead.
+    input: ValidateFileRequest
+    output: ValidateFileResult
+
+  - name: SummarizeFile
+    description: >-
+      Report a quick, cheap top-level layout summary of an HDF5 file: total
+      group and dataset counts anywhere in the tree, the deepest path depth,
+      the immediate children of the root group, the number of attributes
+      attached to the root group, the library's reported format-
+      compatibility bounds, and the supplied file's byte size. Useful before
+      paying for a full ListHierarchy walk on a large or deep file.
+      Malformed input returns a structured error rather than crashing.
+    input: SummarizeFileRequest
+    output: SummarizeFileResult
+
+  - name: ListHierarchy
+    description: >-
+      Walk an HDF5 file's full group/dataset tree in one depth-first pass
+      and report every node found: its path, whether it is a group or a
+      dataset, and — for datasets — dtype, shape, and attribute count. The
+      root group is always included first. Capped at max_entries (default
+      500, hard cap 2000) with a truncated flag and the true total entry
+      count when the file has more nodes than were returned. Malformed
+      input returns a structured error rather than crashing.
+    input: ListHierarchyRequest
+    output: ListHierarchyResult
+
+  - name: ReadDatasetInfo
+    description: >-
+      Read one dataset's full storage-layout metadata without reading any
+      of its actual data: dtype, shape, maxshape (resizable-dimension
+      bounds), chunk shape, compression filter and its opts, shuffle/
+      fletcher32 filter flags, declared fill value, logical (uncompressed)
+      byte size, and attribute count. A dataset_path that does not exist,
+      or that names a group instead of a dataset, returns a structured
+      error (NOT_FOUND / INVALID_ARGUMENT respectively) rather than
+      crashing.
+    input: ReadDatasetInfoRequest
+    output: ReadDatasetInfoResult
+
+  - name: ReadAttributes
+    description: >-
+      Read every attribute attached at one path in an HDF5 file — the file
+      root ("/" or ""), any group, or any dataset — as name/dtype/JSON-
+      encoded-value triples. Capped at 200 attributes (with a truncated
+      flag and the true total count) and each attribute value's JSON
+      encoding is capped independently, with an oversized value replaced by
+      a truncated placeholder rather than blowing the response size. A path
+      that does not exist in the file returns a structured NOT_FOUND error
+      rather than crashing.
+    input: ReadAttributesRequest
+    output: ReadAttributesResult
+
+  - name: ReadSlice
+    description: >-
+      Extract a bounded rectangular slice of one dataset — an independent
+      Python-slice-style (start, stop, step) selection per dimension — and
+      return it as a JSON value (nested array matching the slice's shape,
+      any rank) or as RFC 4180 CSV (1-D or 2-D slices only; higher rank
+      with CSV requested is a structured INVALID_ARGUMENT error). The
+      requested slice's element count is computed from shape/dtype metadata
+      and checked against a documented cap *before* any data is read, so a
+      small but highly compressed dataset cannot be used to force an
+      oversized read; a slice over the cap is rejected with a structured
+      TOO_LARGE error naming the limit, not silently truncated. A
+      dataset_path that does not exist, that names a group, or a slice with
+      more dimensions than the dataset has returns a structured error
+      rather than crashing.
+    input: ReadSliceRequest
+    output: ReadSliceResult

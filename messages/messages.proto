@@ -1,0 +1,273 @@
+// This file defines the data contracts (messages) for your Axiom package.
+// Every node's --input and --output refers to a message defined here.
+//
+// Run `axiom create message <Name>` to scaffold a new message below.
+// Run `axiom generate` to compile these definitions into language bindings in gen/.
+//
+// DOCUMENTATION
+//   Comments written directly above a message or field declaration are extracted
+//   automatically at publish time and shown in the Axiom registry as documentation.
+//   Write your descriptions there — no separate doc files needed.
+//
+//   Leading comment  (no blank line before the declaration) → registry description ✓
+//   Detached comment (blank line before the declaration)    → ignored by registry  ✗
+//
+// This file is yours to edit. Axiom only appends new message blocks — it never
+// overwrites or removes content you have written.
+
+syntax = "proto3";
+
+package christiangeorgelucas.hdf5_tools;
+
+// Data contracts for christiangeorgelucas/hdf5-tools — deterministic,
+// stateless inspection and bounded extraction over HDF5 (.h5/.hdf5) files,
+// wrapping h5py (BSD-3-Clause; the reference Python binding to the HDF5 C
+// library, itself BSD-style-licensed). Every node is a pure bytes-in,
+// struct-out transform: the caller-supplied file bytes are written to a
+// private temp file for the duration of the call (h5py/libhdf5 require a
+// real file path — there is no supported in-memory-bytes API for the full
+// feature surface used here) and the temp file is always removed before
+// the node returns, including on error. Nothing is ever read from a real
+// filesystem path the caller names, or fetched from a URL — `data` is the
+// only source of bytes.
+//
+// Binary payloads use the `data` field name throughout (the convention this
+// package's siblings — parquet-tools, archive-tools — use for the same
+// reason: a flow edge that just moves bytes needs one obvious field to bind
+// to).
+//
+// SAFETY (see nodes/_helpers.py for the enforced bounds):
+//   - Every `data` input is capped at MAX_INPUT_BYTES (640 KiB — well under
+//     the platform's deployed-invocation ingress limit, which binds
+//     tighter than the raw node gRPC transport cap).
+//   - HDF5 supports per-dataset compression (gzip/lzf/szip), so a small
+//     file can legitimately decode to an enormous array — a decompression
+//     bomb. ReadSlice therefore computes the REQUESTED slice's element
+//     count from cheap shape/dtype metadata (no decompression) and rejects
+//     the call with TOO_LARGE *before* reading a single element if that
+//     count exceeds MAX_SLICE_ELEMENTS. ReadDatasetInfo/ListHierarchy/
+//     ReadAttributes never materialize dataset data at all, only metadata.
+//   - ListHierarchy caps returned entries at MAX_HIERARCHY_ENTRIES and
+//     ReadAttributes caps returned attributes at MAX_ATTRIBUTES, both with
+//     a `truncated` flag rather than an unbounded response.
+
+// A structured, deterministic failure. Every output message carries one; it
+// is unset (empty code) on success. Nodes never raise or crash on bad
+// input — they return this instead. Codes: INVALID_INPUT (empty data, or
+// data that does not parse as HDF5), TOO_LARGE (raw input over
+// MAX_INPUT_BYTES, or a requested slice over MAX_SLICE_ELEMENTS),
+// NOT_FOUND (a group/dataset/attribute path that does not exist in the
+// file), INVALID_ARGUMENT (a bad operation parameter, e.g. a dataset path
+// that actually names a group, or an output_format that cannot represent
+// the result's shape).
+message Error {
+  // Stable machine-readable code (see message-level doc for the set).
+  string code = 1;
+  // Human-readable detail naming exactly what was rejected and why.
+  string message = 2;
+}
+
+// Input to ValidateFile: a cheap structural well-formedness check — can
+// libhdf5 open these bytes as an HDF5 file at all — without walking the
+// tree or reading any data.
+message ValidateFileRequest {
+  // Candidate HDF5 file bytes.
+  bytes data = 1;
+}
+
+message ValidateFileResult {
+  // True iff `data` opens as a structurally valid HDF5 file within the
+  // documented input size cap. False for anything unparseable — detail
+  // says why. This is a business outcome, distinct from the hard
+  // input-level failure reported via `error` (e.g. TOO_LARGE on the raw
+  // bytes, which never even attempts to open the file).
+  bool valid = 1;
+  // Human-readable reason when valid=false; empty when valid=true.
+  string detail = 2;
+  // The HDF5 library's own superblock format version string (e.g. "0",
+  // "2") when valid=true; empty otherwise.
+  string superblock_version = 3;
+  Error error = 4;
+}
+
+// Input to SummarizeFile: a quick, cheap top-level layout summary — group
+// and dataset counts, tree depth, and root attributes — useful before
+// paying for a full ListHierarchy walk.
+message SummarizeFileRequest {
+  bytes data = 1;
+}
+
+message SummarizeFileResult {
+  // Total groups in the file, including the root group and any nested
+  // groups, however deep.
+  int32 num_groups = 1;
+  // Total datasets anywhere in the file.
+  int32 num_datasets = 2;
+  // Deepest path depth found (root = 0; "/a/b" = 2).
+  int32 max_depth = 3;
+  // Number of attributes attached directly to the root group ("/").
+  int32 root_num_attrs = 4;
+  // Names of the immediate children of the root group, in file order.
+  repeated string top_level_names = 5;
+  // The library-reported low/high format-compatibility bounds this file
+  // was written with, e.g. "earliest/latest", "v108/v110".
+  string libver_bounds = 6;
+  // Size of the supplied `data` in bytes (the on-disk file size).
+  int64 file_size_bytes = 7;
+  Error error = 8;
+}
+
+// One node (group or dataset) discovered while walking the file tree.
+message HierarchyEntry {
+  // Full path from root, e.g. "/", "/measurements", "/measurements/temp".
+  string path = 1;
+  // "group" or "dataset".
+  string kind = 2;
+  // Dataset only: the h5py/numpy dtype string (e.g. "float64", "int32",
+  // "|S10"). Empty for a group.
+  string dtype = 3;
+  // Dataset only: its shape. Empty for a group or a scalar dataset (shape
+  // == ()).
+  repeated int64 shape = 4;
+  // Number of attributes attached directly at this path.
+  int32 num_attrs = 5;
+}
+
+// Input to ListHierarchy: walk the full group/dataset tree in a single
+// pass (h5py's Group.visititems, depth-first) and report every node found.
+message ListHierarchyRequest {
+  bytes data = 1;
+  // Max entries to return; <=0 means "use the default"
+  // (DEFAULT_HIERARCHY_ENTRIES). Always capped at MAX_HIERARCHY_ENTRIES
+  // regardless of what the caller requests.
+  int32 max_entries = 2;
+}
+
+message ListHierarchyResult {
+  // The root group ("/") is always entries[0], followed by every
+  // descendant in depth-first visititems order, capped at max_entries.
+  repeated HierarchyEntry entries = 1;
+  // Total groups + datasets the file actually contains (before capping).
+  int32 total_entries_available = 2;
+  // True if entries.size() < total_entries_available, i.e. the walk was
+  // cut short by the cap.
+  bool truncated = 3;
+  Error error = 4;
+}
+
+// Input to ReadDatasetInfo: full storage-layout metadata for one dataset —
+// dtype, shape, chunking, compression, and fill value — without reading
+// any of its data.
+message ReadDatasetInfoRequest {
+  bytes data = 1;
+  // Path to a dataset, e.g. "/measurements/temp".
+  string dataset_path = 2;
+}
+
+message ReadDatasetInfoResult {
+  // The h5py/numpy dtype string, e.g. "float64", "int32", "|S10",
+  // "<U8" (structured/compound dtypes report numpy's repr).
+  string dtype = 1;
+  repeated int64 shape = 2;
+  // Per-dimension upper bound for a resizable dataset; -1 for a dimension
+  // declared unlimited (h5py.UNLIMITED). Empty if the dataset is not
+  // resizable (maxshape == shape).
+  repeated int64 maxshape = 3;
+  // Chunk shape if the dataset is chunked; empty if stored contiguously
+  // or as a scalar.
+  repeated int64 chunks = 4;
+  // "" (contiguous/no filter), "gzip", "lzf", or "szip".
+  string compression = 5;
+  // The filter's own opts (e.g. gzip level 0-9); -1 if compression is "".
+  int32 compression_opts = 6;
+  bool shuffle = 7;
+  bool fletcher32 = 8;
+  // The dataset's declared fill value, stringified; empty if none/zero
+  // default.
+  string fillvalue = 9;
+  // Logical (uncompressed) size in bytes: product(shape) * dtype itemsize.
+  int64 nbytes = 10;
+  // Number of attributes attached to this dataset.
+  int32 num_attrs = 11;
+  Error error = 12;
+}
+
+// One attribute's name, declared dtype, and JSON-encoded value.
+message AttributeEntry {
+  string name = 1;
+  // The h5py/numpy dtype string of the attribute's value.
+  string dtype = 2;
+  // The value, JSON-encoded: a scalar (number/string/bool) or a nested
+  // JSON array for an array-valued attribute. A value whose JSON encoding
+  // would exceed MAX_ATTR_VALUE_BYTES is replaced with a truncated
+  // placeholder and `value_truncated` is set instead.
+  string value_json = 3;
+  bool value_truncated = 4;
+}
+
+// Input to ReadAttributes: read every attribute attached at one path — the
+// file root ("/" or ""), any group, or any dataset.
+message ReadAttributesRequest {
+  bytes data = 1;
+  // "" or "/" for the root group; otherwise a group or dataset path.
+  string path = 2;
+}
+
+message ReadAttributesResult {
+  repeated AttributeEntry attributes = 1;
+  // Total attributes actually attached at `path` (before capping).
+  int32 total_attributes_available = 2;
+  // True if attributes.size() < total_attributes_available.
+  bool truncated = 3;
+  Error error = 4;
+}
+
+// One (start, stop, step) selection along a single dataset dimension,
+// Python-slice semantics. All three are optional: start defaults to 0,
+// stop defaults to the dimension's full extent, step defaults to 1.
+message SliceDim {
+  int64 start = 1;
+  // 0 or negative means "through the end of this dimension" (proto3 has no
+  // unset-vs-zero distinction for a scalar field, so this dimension's
+  // slice cannot stop exactly at index 0 — an accepted trade-off, the same
+  // convention this package's siblings use for an optional numeric bound).
+  int64 stop = 2;
+  // Must be >= 1 if set; 0/unset defaults to 1.
+  int64 step = 3;
+}
+
+enum SliceOutputFormat {
+  SLICE_OUTPUT_FORMAT_UNSPECIFIED = 0;
+  // A JSON value: a nested array matching the slice's shape (or a bare
+  // scalar if the slice is 0-dimensional). Works for any rank.
+  SLICE_OUTPUT_FORMAT_JSON = 1;
+  // RFC 4180 CSV, header row first. Only representable for a 1-D or 2-D
+  // slice — requesting CSV for a higher-rank slice is INVALID_ARGUMENT.
+  SLICE_OUTPUT_FORMAT_CSV = 2;
+}
+
+// Input to ReadSlice: extract a bounded rectangular slice of one dataset.
+// One SliceDim per dimension of the dataset; omit trailing dimensions to
+// take their full extent (also subject to MAX_SLICE_ELEMENTS).
+message ReadSliceRequest {
+  bytes data = 1;
+  string dataset_path = 2;
+  repeated SliceDim slice = 3;
+  SliceOutputFormat output_format = 4;
+}
+
+message ReadSliceResult {
+  // Populated when output_format is JSON.
+  string json = 1;
+  // Populated when output_format is CSV. For a 1-D slice: header "index,
+  // value" then one data row per element. For a 2-D slice: header
+  // "row,col_0,col_1,..." then one data row per row of the slice.
+  string csv = 2;
+  // The actual shape of the returned slice (after applying start/stop/step
+  // and the dataset's own extent).
+  repeated int64 shape = 3;
+  int64 total_elements = 4;
+  // The source dataset's dtype string.
+  string dtype = 5;
+  Error error = 6;
+}

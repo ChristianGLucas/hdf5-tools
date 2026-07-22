@@ -1,0 +1,3 @@
+# Add your Python runtime dependencies here, one per line.
+h5py==3.16.0
+numpy==2.5.1
