@@ -28,8 +28,9 @@ secrets.
 
 ## Bounds
 
-Every input is capped at 640 KiB (comfortably under the platform's deployed-invocation
-ingress limit). HDF5's built-in per-dataset compression means a small file can decode to
+Every input is capped at 11 MiB of raw file bytes (comfortably under the platform's
+deployed-invocation ingress limit once base64/JSON framing overhead is accounted for).
+HDF5's built-in per-dataset compression means a small file can decode to
 an enormous array, so `ReadSlice` computes the requested slice's element count from cheap
 shape/dtype metadata and rejects the call with a structured `TOO_LARGE` error *before*
 reading any data if it would exceed a documented cap — never silently truncated.

@@ -1,5 +1,5 @@
 name: christiangeorgelucas/hdf5-tools
-version: 0.1.0
+version: 0.1.1
 language: python
 description: >-
   Composable Axiom nodes for deterministic, offline inspection and bounded
@@ -14,8 +14,10 @@ description: >-
   bounded rectangular slice of one dataset as JSON or CSV. Every node writes
   the caller-supplied bytes to a private temp file for the call and removes
   it before returning (stateless; h5py has no full-featured in-memory-bytes
-  API). Every input is capped at 640 KiB (well under the platform's
-  deployed-invocation ingress limit); ReadSlice additionally rejects a
+  API). Every input is capped at 11 MiB of raw file bytes (comfortably
+  under the platform's ~16 MiB deployed-invocation ingress limit once
+  base64/JSON framing overhead is accounted for); ReadSlice additionally
+  rejects a
   requested slice whose element count would exceed a documented cap
   *before* reading any data, since HDF5's built-in compression means a
   small file can decode to an enormous array.

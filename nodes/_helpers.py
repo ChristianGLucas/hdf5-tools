@@ -2,12 +2,14 @@
 
 Bounds and rationale
 ---------------------
-The Axiom node gRPC transport caps a message at ~4 MiB, but the *deployed*
-invocation's HTTP ingress caps the request/response body far tighter
-(observed ~1 MiB) — that is the real binding limit for a payload-bearing
-node, and it is invisible to local `axiom test`/`axiom dev`. MAX_INPUT_BYTES
-is set comfortably under that, leaving margin for base64/JSON framing
-overhead at the ingress.
+The platform's deployed-invocation ingress accepts a request body up to
+~17 MiB (nginx raised to 64m; MaxRunPayloadBytes 16 MiB; node gRPC transport
+24 MiB) — an earlier ingress misconfiguration silently capped this at ~1 MiB
+and this package was correspondingly capped at 640 KiB to dodge it; that
+platform bug is now fixed. Every `data` input here is binary HDF5 bytes
+carried as base64 in a JSON request, a ~1.33x inflation, plus JSON envelope
+overhead. MAX_INPUT_BYTES is set to 11 MiB of *raw* file bytes so the
+encoded request body stays comfortably under the ~16 MiB real ceiling.
 
 Decompression-bomb guard: HDF5 supports per-dataset compression (gzip/lzf/
 szip). A dataset's on-disk (compressed) footprint can be tiny while its
@@ -38,7 +40,7 @@ from gen.messages_pb2 import Error
 
 # --- Bounds ------------------------------------------------------------
 
-MAX_INPUT_BYTES = 640 * 1024
+MAX_INPUT_BYTES = 11 * 1024 * 1024
 
 DEFAULT_HIERARCHY_ENTRIES = 500
 MAX_HIERARCHY_ENTRIES = 2000
@@ -47,10 +49,15 @@ MAX_ATTRIBUTES = 200
 MAX_ATTR_VALUE_JSON_BYTES = 4000
 
 # Element cap for ReadSlice, computed from the *requested* slice shape
-# before any data is read. At 8 bytes/element (float64/int64, the widest
-# common primitive) this is <= ~1.6 MB raw; after JSON/CSV text encoding
-# (worst case several bytes per number, plus separators) it stays
-# comfortably under the 640 KiB response cap for realistic dtypes.
+# before any data is read — independent of MAX_INPUT_BYTES above, since this
+# bounds the *response* (a decompression-bomb guard: a tiny compressed
+# dataset can decode to a huge logical array). At 8 bytes/element (float64/
+# int64, the widest common primitive) this is <= ~1.6 MB raw; after JSON/CSV
+# text encoding (worst case several bytes per number, plus separators) it
+# stays comfortably under the response-side ingress limit for realistic
+# dtypes. Left conservative even though the platform's real ceiling is much
+# larger now — a bigger slice cap has no upside here and only invites huge
+# response bodies.
 MAX_SLICE_ELEMENTS = 200_000
 
 

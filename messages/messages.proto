@@ -37,9 +37,10 @@ package christiangeorgelucas.hdf5_tools;
 // to).
 //
 // SAFETY (see nodes/_helpers.py for the enforced bounds):
-//   - Every `data` input is capped at MAX_INPUT_BYTES (640 KiB — well under
-//     the platform's deployed-invocation ingress limit, which binds
-//     tighter than the raw node gRPC transport cap).
+//   - Every `data` input is capped at MAX_INPUT_BYTES (11 MiB of raw file
+//     bytes) so the base64-in-JSON request body it produces (~1.33x
+//     inflation, plus envelope overhead) stays comfortably under the
+//     platform's deployed-invocation ingress limit (~16 MiB).
 //   - HDF5 supports per-dataset compression (gzip/lzf/szip), so a small
 //     file can legitimately decode to an enormous array — a decompression
 //     bomb. ReadSlice therefore computes the REQUESTED slice's element
