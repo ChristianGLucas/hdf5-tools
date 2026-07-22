@@ -36,31 +36,21 @@ package christiangeorgelucas.hdf5_tools;
 // reason: a flow edge that just moves bytes needs one obvious field to bind
 // to).
 //
-// SAFETY (see nodes/_helpers.py for the enforced bounds):
-//   - Every `data` input is capped at MAX_INPUT_BYTES (11 MiB of raw file
-//     bytes) so the base64-in-JSON request body it produces (~1.33x
-//     inflation, plus envelope overhead) stays comfortably under the
-//     platform's deployed-invocation ingress limit (~16 MiB).
-//   - HDF5 supports per-dataset compression (gzip/lzf/szip), so a small
-//     file can legitimately decode to an enormous array — a decompression
-//     bomb. ReadSlice therefore computes the REQUESTED slice's element
-//     count from cheap shape/dtype metadata (no decompression) and rejects
-//     the call with TOO_LARGE *before* reading a single element if that
-//     count exceeds MAX_SLICE_ELEMENTS. ReadDatasetInfo/ListHierarchy/
-//     ReadAttributes never materialize dataset data at all, only metadata.
-//   - ListHierarchy caps returned entries at MAX_HIERARCHY_ENTRIES and
-//     ReadAttributes caps returned attributes at MAX_ATTRIBUTES, both with
-//     a `truncated` flag rather than an unbounded response.
+// Every node is a pure input->output transform and enforces no
+// payload-size, element-count, or other resource/cost bound of its own —
+// the Axiom platform owns all size/memory/DoS containment. A node only
+// rejects genuine domain errors: input that does not parse as a
+// well-formed HDF5 file, or an operation parameter that does not make
+// sense against the file's actual structure (e.g. a dataset_path that
+// names a group, or a path that does not exist).
 
 // A structured, deterministic failure. Every output message carries one; it
 // is unset (empty code) on success. Nodes never raise or crash on bad
 // input — they return this instead. Codes: INVALID_INPUT (empty data, or
-// data that does not parse as HDF5), TOO_LARGE (raw input over
-// MAX_INPUT_BYTES, or a requested slice over MAX_SLICE_ELEMENTS),
-// NOT_FOUND (a group/dataset/attribute path that does not exist in the
-// file), INVALID_ARGUMENT (a bad operation parameter, e.g. a dataset path
-// that actually names a group, or an output_format that cannot represent
-// the result's shape).
+// data that does not parse as HDF5), NOT_FOUND (a group/dataset/attribute
+// path that does not exist in the file), INVALID_ARGUMENT (a bad operation
+// parameter, e.g. a dataset path that actually names a group, or an
+// output_format that cannot represent the result's shape).
 message Error {
   // Stable machine-readable code (see message-level doc for the set).
   string code = 1;
@@ -77,11 +67,8 @@ message ValidateFileRequest {
 }
 
 message ValidateFileResult {
-  // True iff `data` opens as a structurally valid HDF5 file within the
-  // documented input size cap. False for anything unparseable — detail
-  // says why. This is a business outcome, distinct from the hard
-  // input-level failure reported via `error` (e.g. TOO_LARGE on the raw
-  // bytes, which never even attempts to open the file).
+  // True iff `data` opens as a structurally valid HDF5 file. False for
+  // anything unparseable — detail says why.
   bool valid = 1;
   // Human-readable reason when valid=false; empty when valid=true.
   string detail = 2;
@@ -138,20 +125,19 @@ message HierarchyEntry {
 // pass (h5py's Group.visititems, depth-first) and report every node found.
 message ListHierarchyRequest {
   bytes data = 1;
-  // Max entries to return; <=0 means "use the default"
-  // (DEFAULT_HIERARCHY_ENTRIES). Always capped at MAX_HIERARCHY_ENTRIES
-  // regardless of what the caller requests.
+  // Max entries to return; <=0 (the default) means "return every entry".
   int32 max_entries = 2;
 }
 
 message ListHierarchyResult {
   // The root group ("/") is always entries[0], followed by every
-  // descendant in depth-first visititems order, capped at max_entries.
+  // descendant in depth-first visititems order, limited to max_entries
+  // when the caller set one.
   repeated HierarchyEntry entries = 1;
-  // Total groups + datasets the file actually contains (before capping).
+  // Total groups + datasets the file actually contains.
   int32 total_entries_available = 2;
-  // True if entries.size() < total_entries_available, i.e. the walk was
-  // cut short by the cap.
+  // True if entries.size() < total_entries_available, i.e. the caller's
+  // max_entries cut the walk short.
   bool truncated = 3;
   Error error = 4;
 }
@@ -199,10 +185,11 @@ message AttributeEntry {
   // The h5py/numpy dtype string of the attribute's value.
   string dtype = 2;
   // The value, JSON-encoded: a scalar (number/string/bool) or a nested
-  // JSON array for an array-valued attribute. A value whose JSON encoding
-  // would exceed MAX_ATTR_VALUE_BYTES is replaced with a truncated
-  // placeholder and `value_truncated` is set instead.
+  // JSON array for an array-valued attribute.
   string value_json = 3;
+  // Set when this attribute's value could not be read/decoded at all
+  // (e.g. an exotic committed datatype h5py cannot represent) — value_json
+  // is "null" in that case, not a real reading of the attribute.
   bool value_truncated = 4;
 }
 
@@ -215,10 +202,11 @@ message ReadAttributesRequest {
 }
 
 message ReadAttributesResult {
+  // Every attribute attached at `path`.
   repeated AttributeEntry attributes = 1;
-  // Total attributes actually attached at `path` (before capping).
+  // Total attributes actually attached at `path` (== attributes.size()).
   int32 total_attributes_available = 2;
-  // True if attributes.size() < total_attributes_available.
+  // Always false; kept for shape symmetry with ListHierarchyResult.
   bool truncated = 3;
   Error error = 4;
 }
@@ -255,7 +243,7 @@ enum SliceOutputFormat {
 
 // Input to ReadSlice: extract a bounded rectangular slice of one dataset.
 // One SliceDim per dimension of the dataset; omit trailing dimensions to
-// take their full extent (also subject to MAX_SLICE_ELEMENTS).
+// take their full extent.
 message ReadSliceRequest {
   bytes data = 1;
   string dataset_path = 2;

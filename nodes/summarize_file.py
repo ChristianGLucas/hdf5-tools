@@ -2,7 +2,7 @@ import h5py
 
 from gen.messages_pb2 import SummarizeFileRequest, SummarizeFileResult
 from gen.axiom_context import AxiomContext
-from nodes._helpers import check_input_size, invalid_input, open_h5_temp
+from nodes._helpers import invalid_input, open_h5_temp
 
 
 def summarize_file(ax: AxiomContext, input: SummarizeFileRequest) -> SummarizeFileResult:
@@ -14,10 +14,6 @@ def summarize_file(ax: AxiomContext, input: SummarizeFileRequest) -> SummarizeFi
     paying for a full ListHierarchy walk on a large or deep file.
     Malformed input returns a structured error rather than crashing.
     """
-    size_err = check_input_size(input.data)
-    if size_err is not None:
-        return SummarizeFileResult(error=size_err)
-
     try:
         with open_h5_temp(input.data) as h5f:
             num_groups = 1  # root group

@@ -23,19 +23,17 @@ secrets.
   logical byte size.
 - **ReadAttributes** — every attribute attached at a file/group/dataset path, as
   name/dtype/JSON-encoded-value triples.
-- **ReadSlice** — extract a bounded rectangular slice of one dataset as JSON (any rank)
+- **ReadSlice** — extract a rectangular slice of one dataset as JSON (any rank)
   or CSV (1-D/2-D).
 
-## Bounds
+## Design
 
-Every input is capped at 11 MiB of raw file bytes (comfortably under the platform's
-deployed-invocation ingress limit once base64/JSON framing overhead is accounted for).
-HDF5's built-in per-dataset compression means a small file can decode to
-an enormous array, so `ReadSlice` computes the requested slice's element count from cheap
-shape/dtype metadata and rejects the call with a structured `TOO_LARGE` error *before*
-reading any data if it would exceed a documented cap — never silently truncated.
-`ListHierarchy` and `ReadAttributes` cap their returned entry/attribute counts with a
-`truncated` flag rather than an unbounded response.
+Every node is a pure input-to-output transform: it validates domain correctness (is
+this actually a well-formed HDF5 file? does this path/argument make sense against the
+file's real structure?) and returns a structured error rather than crashing on anything
+malformed. No node imposes its own payload-size, element-count, or other resource bound
+— sizing and resource containment (including guarding against a small file that decodes
+to an enormous array) are the Axiom platform's job, not the package's.
 
 ## License
 

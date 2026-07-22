@@ -2,7 +2,6 @@ import json
 
 from gen.messages_pb2 import ReadAttributesRequest
 from nodes.read_attributes import read_attributes
-from nodes._helpers import MAX_ATTR_VALUE_JSON_BYTES, MAX_ATTRIBUTES
 from nodes._test_fixtures import (
     FakeAxiomContext,
     h5_bytes_with_many_attributes,
@@ -58,26 +57,32 @@ def test_read_attributes_error_path_not_found():
     assert result.error.code == "NOT_FOUND"
 
 
-def test_read_attributes_caps_count_and_reports_truncation():
+def test_read_attributes_returns_all_attributes_uncapped():
+    """No package-imposed count cap: a file with far more attributes than
+    the old 200-entry cap must come back whole and unmarked as truncated —
+    bounding response size is the platform's job now, not the node's."""
     ax = FakeAxiomContext()
-    total = MAX_ATTRIBUTES + 25
+    total = 225
     result = read_attributes(
         ax, ReadAttributesRequest(data=h5_bytes_with_many_attributes(total), path="/")
     )
     assert result.error.code == ""
     assert result.total_attributes_available == total
-    assert len(result.attributes) == MAX_ATTRIBUTES
-    assert result.truncated is True
+    assert len(result.attributes) == total
+    assert result.truncated is False
 
 
-def test_read_attributes_truncates_oversized_value():
+def test_read_attributes_returns_full_value_uncapped():
+    """No package-imposed per-value JSON size cap: a large attribute value
+    must come back whole, not replaced with a truncated placeholder."""
     ax = FakeAxiomContext()
-    data = h5_bytes_with_oversized_attribute(MAX_ATTR_VALUE_JSON_BYTES * 3)
+    value_len = 12_000
+    data = h5_bytes_with_oversized_attribute(value_len)
     result = read_attributes(ax, ReadAttributesRequest(data=data, path="/x"))
     assert result.error.code == ""
     assert len(result.attributes) == 1
-    assert result.attributes[0].value_truncated is True
-    assert len(result.attributes[0].value_json.encode("utf-8")) < MAX_ATTR_VALUE_JSON_BYTES
+    assert result.attributes[0].value_truncated is False
+    assert json.loads(result.attributes[0].value_json) == "z" * value_len
 
 
 def test_read_attributes_error_path_empty_input():

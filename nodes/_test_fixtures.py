@@ -130,8 +130,8 @@ def corrupted_mid_file_h5_bytes() -> bytes:
 
 def h5_bytes_with_oversized_attribute(value_len: int) -> bytes:
     """A file with one dataset carrying a single very long string attribute
-    — used to prove ReadAttributes truncates an oversized value rather than
-    blowing the response size cap."""
+    — used to prove ReadAttributes returns a large value in full rather
+    than capping/truncating it."""
     fd, path = tempfile.mkstemp(suffix=".h5")
     os.close(fd)
     try:
@@ -146,7 +146,7 @@ def h5_bytes_with_oversized_attribute(value_len: int) -> bytes:
 
 def h5_bytes_with_many_attributes(count: int) -> bytes:
     """A file whose root group carries `count` distinct attributes — used
-    to prove ReadAttributes' MAX_ATTRIBUTES cap and truncated flag."""
+    to prove ReadAttributes returns every attribute uncapped."""
     fd, path = tempfile.mkstemp(suffix=".h5")
     os.close(fd)
     try:
@@ -161,8 +161,9 @@ def h5_bytes_with_many_attributes(count: int) -> bytes:
 
 def highly_compressible_h5_bytes(shape, chunk_shape) -> bytes:
     """An HDF5 file with one all-zero, max-gzip-compressed dataset of the
-    requested shape — used to prove the slice-size guard fires from cheap
-    shape/dtype metadata rather than the (tiny) on-disk compressed size."""
+    requested shape — a tiny on-disk file whose logical (uncompressed)
+    shape can still be arbitrarily large; used to prove ReadSlice reads it
+    without imposing any element-count guard of its own."""
     fd, path = tempfile.mkstemp(suffix=".h5")
     os.close(fd)
     try:

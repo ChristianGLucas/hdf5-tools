@@ -2,7 +2,6 @@ import json
 
 from gen.messages_pb2 import ReadSliceRequest, SliceDim, SliceOutputFormat
 from nodes.read_slice import read_slice
-from nodes._helpers import MAX_SLICE_ELEMENTS
 from nodes._test_fixtures import (
     FakeAxiomContext,
     highly_compressible_h5_bytes,
@@ -186,13 +185,14 @@ def test_read_slice_squeezes_size_one_axis_for_csv():
     assert len(rows) == 4  # header + 3 data rows
 
 
-def test_read_slice_guard_fires_from_shape_metadata_not_file_size():
-    """The decompression-bomb guard: a ~1 KB on-disk file with a huge
-    nominal dataset shape (nothing ever written past the fill value) must
-    be rejected by the pre-read element-count check, not silently
-    materialized."""
+def test_read_slice_no_element_cap_on_a_highly_compressed_dataset():
+    """No package-imposed element-count guard: a ~1 KB on-disk file with a
+    logical shape well over the old 200_000-element cap (nothing ever
+    written past the fill value) must be read successfully in full —
+    bounding the size of a read is the platform's job now, not the
+    node's."""
     ax = FakeAxiomContext()
-    data = highly_compressible_h5_bytes((10_000_000,), (1000,))
+    data = highly_compressible_h5_bytes((300_000,), (1000,))
     assert len(data) < 4096  # the file itself is tiny
     result = read_slice(
         ax,
@@ -202,13 +202,13 @@ def test_read_slice_guard_fires_from_shape_metadata_not_file_size():
             output_format=SliceOutputFormat.SLICE_OUTPUT_FORMAT_JSON,
         ),
     )
-    assert result.error.code == "TOO_LARGE"
-    assert result.json == ""
+    assert result.error.code == ""
+    assert result.total_elements == 300_000
 
 
 def test_read_slice_allows_a_narrow_slice_of_the_same_huge_dataset():
     ax = FakeAxiomContext()
-    data = highly_compressible_h5_bytes((10_000_000,), (1000,))
+    data = highly_compressible_h5_bytes((300_000,), (1000,))
     result = read_slice(
         ax,
         ReadSliceRequest(
@@ -220,31 +220,6 @@ def test_read_slice_allows_a_narrow_slice_of_the_same_huge_dataset():
     )
     assert result.error.code == ""
     assert json.loads(result.json) == [0.0] * 10
-
-
-def test_read_slice_element_cap_boundary_is_exact():
-    ax = FakeAxiomContext()
-    data = highly_compressible_h5_bytes((MAX_SLICE_ELEMENTS + 1,), (1000,))
-    at_cap = read_slice(
-        ax,
-        ReadSliceRequest(
-            data=data,
-            dataset_path="/zeros",
-            slice=[SliceDim(start=0, stop=MAX_SLICE_ELEMENTS)],
-            output_format=SliceOutputFormat.SLICE_OUTPUT_FORMAT_JSON,
-        ),
-    )
-    assert at_cap.error.code == ""
-    over_cap = read_slice(
-        ax,
-        ReadSliceRequest(
-            data=data,
-            dataset_path="/zeros",
-            slice=[SliceDim(start=0, stop=MAX_SLICE_ELEMENTS + 1)],
-            output_format=SliceOutputFormat.SLICE_OUTPUT_FORMAT_JSON,
-        ),
-    )
-    assert over_cap.error.code == "TOO_LARGE"
 
 
 def test_read_slice_error_path_not_found():

@@ -1,6 +1,5 @@
 from gen.messages_pb2 import ValidateFileRequest
 from nodes.validate_file import validate_file
-from nodes._helpers import MAX_INPUT_BYTES
 from nodes._test_fixtures import FakeAxiomContext, empty_h5_bytes, sample_h5_bytes
 
 
@@ -29,17 +28,15 @@ def test_validate_file_rejects_malformed_bytes():
     assert result.detail != ""
 
 
-def test_validate_file_error_path_empty_input():
+def test_validate_file_rejects_empty_input():
+    """Empty bytes can never be a well-formed HDF5 file (there's no
+    signature to check) — this is a domain outcome (valid=false), not a
+    distinct input-level error."""
     ax = FakeAxiomContext()
     result = validate_file(ax, ValidateFileRequest(data=b""))
-    assert result.error.code == "INVALID_INPUT"
-
-
-def test_validate_file_error_path_oversized_input():
-    ax = FakeAxiomContext()
-    oversized = b"\x89HDF\r\n\x1a\n" + b"0" * (MAX_INPUT_BYTES + 1)
-    result = validate_file(ax, ValidateFileRequest(data=oversized))
-    assert result.error.code == "TOO_LARGE"
+    assert result.error.code == ""
+    assert result.valid is False
+    assert result.detail != ""
 
 
 def test_validate_file_is_deterministic():

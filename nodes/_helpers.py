@@ -1,24 +1,13 @@
 """Shared helpers for christiangeorgelucas/hdf5-tools nodes.
 
-Bounds and rationale
----------------------
-The platform's deployed-invocation ingress accepts a request body up to
-~17 MiB (nginx raised to 64m; MaxRunPayloadBytes 16 MiB; node gRPC transport
-24 MiB) — an earlier ingress misconfiguration silently capped this at ~1 MiB
-and this package was correspondingly capped at 640 KiB to dodge it; that
-platform bug is now fixed. Every `data` input here is binary HDF5 bytes
-carried as base64 in a JSON request, a ~1.33x inflation, plus JSON envelope
-overhead. MAX_INPUT_BYTES is set to 11 MiB of *raw* file bytes so the
-encoded request body stays comfortably under the ~16 MiB real ceiling.
-
-Decompression-bomb guard: HDF5 supports per-dataset compression (gzip/lzf/
-szip). A dataset's on-disk (compressed) footprint can be tiny while its
-logical (uncompressed) size is enormous — the file-size cap alone does not
-bound how large a *slice read* can be. h5py exposes a Dataset's `.shape` and
-`.dtype` without decompressing any data, so ReadSlice computes the
-requested slice's element count from that cheap metadata and rejects the
-call with TOO_LARGE *before* touching a single element if it would exceed
-MAX_SLICE_ELEMENTS.
+Every node is a pure input->output transform: it does not enforce any
+payload-size, element-count, or other resource/cost bound on itself. A
+node is a function; the Axiom platform (ingress, gRPC transport, pod
+resource limits, sandboxing) owns all size/memory/DoS containment,
+including decompression-bomb-style concerns. The only things a node
+rejects are genuine domain errors: input that is not a well-formed HDF5
+file, or an operation parameter (path, dimension count, ...) that does
+not make sense against the file's actual structure.
 
 Every node operates on a private temp file: h5py/libhdf5 need a real file
 path for the full feature surface used here (there is no supported
@@ -38,28 +27,6 @@ import numpy as np
 
 from gen.messages_pb2 import Error
 
-# --- Bounds ------------------------------------------------------------
-
-MAX_INPUT_BYTES = 11 * 1024 * 1024
-
-DEFAULT_HIERARCHY_ENTRIES = 500
-MAX_HIERARCHY_ENTRIES = 2000
-
-MAX_ATTRIBUTES = 200
-MAX_ATTR_VALUE_JSON_BYTES = 4000
-
-# Element cap for ReadSlice, computed from the *requested* slice shape
-# before any data is read — independent of MAX_INPUT_BYTES above, since this
-# bounds the *response* (a decompression-bomb guard: a tiny compressed
-# dataset can decode to a huge logical array). At 8 bytes/element (float64/
-# int64, the widest common primitive) this is <= ~1.6 MB raw; after JSON/CSV
-# text encoding (worst case several bytes per number, plus separators) it
-# stays comfortably under the response-side ingress limit for realistic
-# dtypes. Left conservative even though the platform's real ceiling is much
-# larger now — a bigger slice cap has no upside here and only invites huge
-# response bodies.
-MAX_SLICE_ELEMENTS = 200_000
-
 
 class NotFoundError(ValueError):
     """Raised when a group/dataset/attribute path does not exist. Callers
@@ -78,10 +45,6 @@ def make_error(code: str, message: str) -> Error:
     return Error(code=code, message=message)
 
 
-def too_large(message: str) -> Error:
-    return make_error("TOO_LARGE", message)
-
-
 def invalid_input(message: str) -> Error:
     return make_error("INVALID_INPUT", message)
 
@@ -92,18 +55,6 @@ def invalid_argument(message: str) -> Error:
 
 def not_found(message: str) -> Error:
     return make_error("NOT_FOUND", message)
-
-
-def check_input_size(data: bytes):
-    """Returns an Error if `data` is empty or exceeds MAX_INPUT_BYTES, else
-    None."""
-    if not data:
-        return invalid_input("data is empty")
-    if len(data) > MAX_INPUT_BYTES:
-        return too_large(
-            f"input is {len(data)} bytes, over the {MAX_INPUT_BYTES}-byte cap"
-        )
-    return None
 
 
 # --- Temp-file handling ---------------------------------------------------

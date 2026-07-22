@@ -5,7 +5,6 @@ from gen.messages_pb2 import ReadDatasetInfoRequest, ReadDatasetInfoResult
 from gen.axiom_context import AxiomContext
 from nodes._helpers import (
     NotFoundError,
-    check_input_size,
     compression_opts_int,
     fillvalue_str,
     invalid_argument,
@@ -26,10 +25,6 @@ def read_dataset_info(ax: AxiomContext, input: ReadDatasetInfoRequest) -> ReadDa
     that names a group instead of a dataset, returns a structured error
     (NOT_FOUND / INVALID_ARGUMENT respectively) rather than crashing.
     """
-    size_err = check_input_size(input.data)
-    if size_err is not None:
-        return ReadDatasetInfoResult(error=size_err)
-
     if not input.dataset_path:
         return ReadDatasetInfoResult(
             error=invalid_argument("dataset_path is required")
