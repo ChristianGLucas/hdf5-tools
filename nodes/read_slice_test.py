@@ -60,6 +60,69 @@ def test_read_slice_golden_partial_1d_slice_with_step():
     assert list(result.shape) == [5]
 
 
+def test_read_slice_golden_negative_start_is_offset_from_end():
+    """Regression test: a negative `start` must follow real Python
+    negative-index semantics (offset from the end), not clamp to 0."""
+    ax = FakeAxiomContext()
+    result = read_slice(
+        ax,
+        ReadSliceRequest(
+            data=sample_h5_bytes(),
+            dataset_path="/counts",
+            slice=[SliceDim(start=-5)],
+            output_format=SliceOutputFormat.SLICE_OUTPUT_FORMAT_JSON,
+        ),
+    )
+    assert result.error.code == ""
+    assert json.loads(result.json) == [95, 96, 97, 98, 99]
+    assert list(result.shape) == [5]
+
+
+def test_read_slice_golden_negative_stop_is_offset_from_end():
+    ax = FakeAxiomContext()
+    result = read_slice(
+        ax,
+        ReadSliceRequest(
+            data=sample_h5_bytes(),
+            dataset_path="/counts",
+            slice=[SliceDim(start=0, stop=-95)],
+            output_format=SliceOutputFormat.SLICE_OUTPUT_FORMAT_JSON,
+        ),
+    )
+    assert result.error.code == ""
+    assert json.loads(result.json) == [0, 1, 2, 3, 4]
+
+
+def test_read_slice_golden_negative_start_and_stop_together():
+    ax = FakeAxiomContext()
+    result = read_slice(
+        ax,
+        ReadSliceRequest(
+            data=sample_h5_bytes(),
+            dataset_path="/counts",
+            slice=[SliceDim(start=-10, stop=-5)],
+            output_format=SliceOutputFormat.SLICE_OUTPUT_FORMAT_JSON,
+        ),
+    )
+    assert result.error.code == ""
+    assert json.loads(result.json) == [90, 91, 92, 93, 94]
+
+
+def test_read_slice_negative_start_clamps_when_offset_exceeds_extent():
+    ax = FakeAxiomContext()
+    result = read_slice(
+        ax,
+        ReadSliceRequest(
+            data=sample_h5_bytes(),
+            dataset_path="/counts",
+            slice=[SliceDim(start=-1000)],
+            output_format=SliceOutputFormat.SLICE_OUTPUT_FORMAT_JSON,
+        ),
+    )
+    assert result.error.code == ""
+    assert list(result.shape) == [100]  # clamped to the full extent, not an error
+
+
 def test_read_slice_golden_vlen_string_dataset_decoded_to_text():
     ax = FakeAxiomContext()
     result = read_slice(

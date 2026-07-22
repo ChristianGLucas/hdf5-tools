@@ -223,14 +223,20 @@ message ReadAttributesResult {
 }
 
 // One (start, stop, step) selection along a single dataset dimension,
-// Python-slice semantics. All three are optional: start defaults to 0,
-// stop defaults to the dimension's full extent, step defaults to 1.
+// Python-slice semantics, including negative-index-from-the-end (-1 is the
+// last element along this dimension), for BOTH start and stop. All three
+// are optional: start defaults to 0, stop defaults to the dimension's full
+// extent, step defaults to 1.
 message SliceDim {
+  // Negative means an offset from the end of this dimension (e.g. -5 on a
+  // length-100 dimension is index 95), then clamped into [0, extent].
   int64 start = 1;
-  // 0 or negative means "through the end of this dimension" (proto3 has no
-  // unset-vs-zero distinction for a scalar field, so this dimension's
-  // slice cannot stop exactly at index 0 — an accepted trade-off, the same
-  // convention this package's siblings use for an optional numeric bound).
+  // Same negative-offset-from-end handling as `start`, with one deliberate
+  // exception: exactly 0 (proto3's unset default — there is no
+  // unset-vs-zero distinction for a scalar field) means "through the end
+  // of this dimension" rather than literally index 0. A caller who
+  // genuinely wants an empty result should set stop equal to start
+  // instead.
   int64 stop = 2;
   // Must be >= 1 if set; 0/unset defaults to 1.
   int64 step = 3;

@@ -221,11 +221,28 @@ def fillvalue_str(dataset) -> str:
     return str(val)
 
 
+def _resolve_bound(value: int, extent: int) -> int:
+    """Apply real Python negative-index semantics: a negative value is an
+    offset from the end (-1 == extent - 1), then clamp into [0, extent]."""
+    if value < 0:
+        value = extent + value
+    return max(0, min(value, extent))
+
+
 def resolve_slice_dims(slice_dims, shape):
     """Given the request's repeated SliceDim and the dataset's real shape,
     return (python_slices, result_shape). Raises InvalidArgumentError if
     slice_dims has more entries than the dataset has dimensions, or a step
-    <= 0."""
+    <= 0.
+
+    start and stop both follow real Python negative-index semantics
+    (negative == offset from the end, e.g. -5 on a length-100 dimension is
+    index 95), with one deliberate deviation: proto3 scalar fields have no
+    unset-vs-zero distinction, so stop == 0 (the un-set default) is the
+    sentinel for "through the end of this dimension" rather than literally
+    index 0 — a caller who genuinely wants an empty result should use a
+    stop equal to start instead.
+    """
     if len(slice_dims) > len(shape):
         raise InvalidArgumentError(
             f"slice has {len(slice_dims)} dimensions but dataset has {len(shape)}"
@@ -235,13 +252,11 @@ def resolve_slice_dims(slice_dims, shape):
     for i, extent in enumerate(shape):
         if i < len(slice_dims):
             d = slice_dims[i]
-            start = d.start
-            stop = extent if d.stop <= 0 else d.stop
+            start = _resolve_bound(d.start, extent)
+            stop = extent if d.stop == 0 else _resolve_bound(d.stop, extent)
             step = d.step if d.step and d.step > 0 else 1
         else:
             start, stop, step = 0, extent, 1
-        start = max(0, min(start, extent))
-        stop = max(0, min(stop, extent))
         py_slices.append(slice(start, stop, step))
         result_shape.append(len(range(start, stop, step)))
     return tuple(py_slices), result_shape
