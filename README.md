@@ -1,6 +1,6 @@
 # christiangeorgelucas/hdf5-tools
 
-Composable [Axiom](https://axiom.co) nodes for deterministic, offline inspection and
+Composable [Axiom](https://axiomide.com) nodes for deterministic, offline inspection and
 bounded extraction of HDF5 (`.h5`/`.hdf5`) scientific/hierarchical data files, wrapping
 [h5py](https://www.h5py.org/) (BSD-3-Clause) — the reference Python binding to the HDF5
 C library (itself BSD-style-licensed), which owns the canonical HDF5 reader.
